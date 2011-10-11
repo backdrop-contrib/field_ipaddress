@@ -1,0 +1,31 @@
+<?php
+
+/**
+ * Implements hook_field_schema().
+ */
+function field_ipaddress_field_schema() {
+  return array(
+    'columns' => array(
+      'cardinality' => array(
+        'type' => 'int',
+        'not null' => TRUE,
+      ),
+      'start' => array(
+        'type' => 'int',
+        'size' => 'big',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'end' => array(
+        'type' => 'int',
+        'size' => 'big',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+    ),
+    'indexes' => array(
+      'cardinality' => array('cardinality'),
+      'range' => array('start', 'end'),
+    ),
+  );
+}

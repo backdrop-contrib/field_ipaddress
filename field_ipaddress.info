@@ -1,0 +1,5 @@
+name = IP Address Field
+description = Provides a field for storing IP Addresses.
+package = Fields
+core = 7.x
+dependencies[] = field
