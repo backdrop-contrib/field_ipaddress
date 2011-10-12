@@ -6,10 +6,6 @@
 function field_ipaddress_field_schema() {
   return array(
     'columns' => array(
-      'cardinality' => array(
-        'type' => 'int',
-        'not null' => TRUE,
-      ),
       'start' => array(
         'type' => 'int',
         'size' => 'big',
@@ -24,7 +20,7 @@ function field_ipaddress_field_schema() {
       ),
     ),
     'indexes' => array(
-      'cardinality' => array('cardinality'),
+      'start' => array('start'),
       'range' => array('start', 'end'),
     ),
   );

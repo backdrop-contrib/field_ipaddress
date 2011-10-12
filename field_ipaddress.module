@@ -7,8 +7,8 @@ function field_ipaddress_field_info() {
   return array(
     'field_ipaddress' => array(
       'label' => t('IP Address'),
-      'description' => t('Stores a single or range of IP Addresses.'),
-      'default_widget' => 'field_ipaddress_multi',
+      'description' => t('Stores a single IP address, or range of IP addresses.'),
+      'default_widget' => 'field_ipaddress_range',
       'default_formatter' => 'field_ipaddress_list',
     ),
   );
@@ -19,8 +19,8 @@ function field_ipaddress_field_info() {
  */
 function field_ipaddress_field_validate($entity_type, $entity, $field, $instance, $langcode, $items, &$errors) {
   foreach ($items as $delta => $item) {
-    if (!empty($item['ipaddress'])) {
-      if (!field_ipaddress_string2ranges($item['ipaddress'])) {
+    if (!empty($item['network'])) {
+      if (!field_ipaddress_network2range($item['network'])) {
         $errors[$field['field_name']][$langcode][$delta][] = array(
           'error' => 'field_ipaddress_invalid',
           'message' => t('Invalid IP ranges or addresses.'),
@@ -30,12 +30,26 @@ function field_ipaddress_field_validate($entity_type, $entity, $field, $instance
   }
 }
 
+/**
+ * Implements hook_field_presave().
+ */
+function field_ipaddress_field_presave($entity_type, $entity, $field, $instance, $langcode, &$items) {
+  if ($field['type'] == 'field_ipaddress') {
+    foreach ($items as $delta => $item) {
+      if (isset($item['network'])) {
+        list($startip, $endip) = field_ipaddress_network2range($item['network']);
+        $items[$delta]['start'] = ip2long($startip);
+        $items[$delta]['end'] = ip2long($endip);
+      }
+    }
+  }
+}
 
 /**
  * Implements hook_field_is_empty().
  */
 function field_ipaddress_field_is_empty($item, $field) {
-  return empty($item['ipaddress']);
+  return empty($item['network']);
 }
 
 /**
@@ -60,7 +74,7 @@ function field_ipaddress_field_formatter_view($entity_type, $entity, $field, $in
     case 'field_ipaddress_list':
       foreach ($items as $delta => $item) {
         $element[$delta] = array(
-          '#markup' => var_export($item['ipaddress'], TRUE),
+          '#markup' => var_export($item['network'], TRUE),
         );
       }
       break;
@@ -74,12 +88,8 @@ function field_ipaddress_field_formatter_view($entity_type, $entity, $field, $in
  */
 function field_ipaddress_field_widget_info() {
   return array(
-    'field_ipaddress_single' => array(
-      'label' => t('Single address'),
-      'field types' => array('field_ipaddress'),
-    ),
-    'field_ipaddress_multi' => array(
-      'label' => t('Multiple addresses'),
+    'field_ipaddress_range' => array(
+      'label' => t('Range input'),
       'field types' => array('field_ipaddress'),
     ),
   );
@@ -89,34 +99,34 @@ function field_ipaddress_field_widget_info() {
  * Implements hook_field_widget_form().
  */
 function field_ipaddress_field_widget_form(&$form, &$form_state, $field, $instance, $langcode, $items, $delta, $element) {
-  $value = isset($items[$delta]['ipaddress']) ? $items[$delta]['ipaddress'] : '';
-
+  $start = isset($items[$delta]['start']) ? $items[$delta]['start'] : '';
+  $end = isset($items[$delta]['end']) ? $items[$delta]['end'] : '';
+  
+  $value = '';
+  if ($start && $end) {
+    $value = field_ipaddress_long2network($start, $end);
+  }
+  
   $widget = $element;
   $widget['#delta'] = $delta;
 
+  $widget = array(
+    '#title' => $instance['label'],
+    '#description' => $instance['description'],
+    '#default_value' => $value,
+    '#type' => 'textfield',
+    '#size' => 30,
+  );
+      
   switch ($instance['widget']['type']) {
-    case 'field_ipaddress_single':
-      $widget = array(
-        '#title' => $instance['label'],
-        '#description' => $instance['description'],
-        '#default_value' => $value,
-        '#type' => 'textfield',
-        '#maxlength' => 15,
-        '#size' => 15,
-      );
+    case 'field_ipaddress_simple':
       break;
 
-    case 'field_ipaddress_multi':
-      $widget = array(
-        '#title' => t('IP Address'),
-        '#default_value' => $value,
-        '#type' => 'textarea',
-        '#rows' => 4,
-      );
+    case 'field_ipaddress_range':
       break;
   }
 
-  $element['ipaddress'] = $widget;
+  $element['network'] = $widget;
 
   return $element;
 }
@@ -133,15 +143,15 @@ function field_ipaddress_field_widget_error($element, $error, $form, &$form_stat
 }
 
 /**
- * Convert a start address and end address into a smaller formatted string
- *
- * For example, $s=1111111111 $e=222222222 into 111.111.111.*
+ * Convert a start address and end address (as longs) into a smaller human readable string.
  *
  * @param int $start The start address as a long
  * @param int $end The end address as a long
  * @return string A start and end range as the small formatted string
+ * @example
+ *   $s=1869573999, $e=1869574110 => 111.111.111.111-222
  */
-function field_ipaddress_range2network($start, $end) {
+function field_ipaddress_long2network($start, $end) {
   if ($start === $end) {
     $output = long2ip($start);
   } else {
@@ -164,80 +174,65 @@ function field_ipaddress_range2network($start, $end) {
 }
 
 /**
- * Take a set of ranges and return a shortened imploded string ready for editing.
- */
-function field_ipaddress_networks2string($ranges) {
-  $networks = array();
-  foreach ($ranges as $range) {
-    $nets[] = field_ipaddress_range2network($range[0], $range[1]);
-  }
-  return implode("\n", $networks);
-}
-
-
-/**
- * Take human input and return it as an array of start and end ranges
+ * Take human input and return the dotted quad start and end range.
  *
- * @param input $string A newline separated list of IP ranges
+ * @param input $string An IP range.
  * @return array Start and end addresses in dotted quad format, else FALSE.
+ * @example
+ *   "111.111.111.*" => array("111.111.111.0", "111.111.111.255")
+ *   "111.111.111.111-222" => array("111.111.111.111", "111.111.111.222")
  */
-function field_ipaddress_string2ranges($string) {
-  $cleaned = array();
-  $networks = explode("\n", $string);
-  foreach ($networks as $network) {
-    $star = strpos($network, '*');
-    $dash = strpos($network, '-');
+function field_ipaddress_network2range($network) {
+  $star = strpos($network, '*');
+  $dash = strpos($network, '-');
 
-    if (empty($network)) {
-      continue;
+  if (ctype_alpha($network[strlen($network)-1])) {
+    // Hostname conversion
+    $start = $end = gethostbyname($network);
+    if ($start === $network) {
+      return FALSE;
     }
-    elseif (ctype_alpha($network[strlen($network)-1])) {
-      // Hostname conversion
-      $start = $end = gethostbyname($network);
-    }
-    else {
-      // Simple validation
-      if ($star === false && $dash === false) {
-        $res   = long2ip(ip2long($network));
-        $start = $end = $res;
-        if ($res === '0.0.0.0') {
-          return false;
-        }
-      }
-
-      // Using a star
-      if ($star !== false) {
-        $start = long2ip(ip2long(str_replace('*', '0', $network)));
-        $end   = long2ip(ip2long(str_replace('*', '255', $network)));
-        if ($start === '0.0.0.0' || $end === '0.0.0.0') {
-          return false;
-        }
-      }
-
-      // Using a dash
-      if ($dash !== false) {
-        list($start, $end) = explode('-', $network);
-
-        // Check whether $end is a full IP or just the last quad
-        if (strpos($end, '.') !== false) {
-          $end = long2ip(ip2long(trim($end)));
-        } else {
-          // Get the first 3 quads of the start address
-          $classc = substr($start, 0, strrpos($start, '.'));
-          $classc .= '.' . $end;
-          $end = long2ip(ip2long(trim($classc)));
-        }
-
-        // Check for failure
-        $start = long2ip(ip2long(trim($start)));
-        if ($start === '0.0.0.0' || $end === '0.0.0.0') {
-          return false;
-        }
+  }
+  else {
+    // Simple validation
+    if ($star === false && $dash === false) {
+      $res   = long2ip(ip2long($network));
+      $start = $end = $res;
+      if ($res === '0.0.0.0') {
+        return FALSE;
       }
     }
 
-    $cleaned[] = array($start, $end);
+    // Using a star
+    if ($star !== false) {
+      $start = long2ip(ip2long(str_replace('*', '0', $network)));
+      $end   = long2ip(ip2long(str_replace('*', '255', $network)));
+      if ($start === '0.0.0.0' || $end === '0.0.0.0') {
+        return FALSE;
+      }
+    }
+
+    // Using a dash
+    if ($dash !== FALSE) {
+      list($start, $end) = explode('-', $network);
+
+      // Check whether $end is a full IP or just the last quad
+      if (strpos($end, '.') !== FALSE) {
+        $end = long2ip(ip2long(trim($end)));
+      } else {
+        // Get the first 3 quads of the start address
+        $classc = substr($start, 0, strrpos($start, '.'));
+        $classc .= '.' . $end;
+        $end = long2ip(ip2long(trim($classc)));
+      }
+
+      // Check for failure
+      $start = long2ip(ip2long(trim($start)));
+      if ($start === '0.0.0.0' || $end === '0.0.0.0') {
+        return FALSE;
+      }
+    }
   }
 
-  return $cleaned;
+  return array($start, $end);
 }
