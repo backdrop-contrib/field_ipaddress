@@ -38,11 +38,8 @@ function field_ipaddress_field_formatter_info() {
  */
 function field_ipaddress_field_validate($entity_type, $entity, $field, $instance, $langcode, $items, &$errors) {
 
-  // I suspect this is a bug in the Fields API as $items should be indepedent of the widget right?
-  // This let's us keep our field reading logic the same in either case.
-  if ($field['cardinality'] != 1) {
-    $items = array($items);
-  }
+  // This is a hack
+  if (isset($items['network'])) { $items = array(array('network' => $items['network'])); }
 
   foreach ($items as $delta => $item) {
     if (!empty($item['network'])) {
@@ -70,34 +67,21 @@ function field_ipaddress_field_validate($entity_type, $entity, $field, $instance
  */
 function field_ipaddress_field_presave($entity_type, $entity, $field, $instance, $langcode, &$items) {
   if ($field['type'] === 'field_ipaddress') {
-    
-    // I realise this is ridiculous, but the data received in $items is wildy inconsistant
-    if ($field['cardinality'] == 1) { // TODO
-      foreach ($items as $delta => $item) {
-        if (!empty($item['network'])) {
-          list($startip, $endip) = field_ipaddress_network2range($item['network']);
-          $items[$delta]['start'] = ip2long($startip);
-          $items[$delta]['end'] = ip2long($endip);
-        }
-      }
-    }
-    else {
-      foreach ($items as $delta => $item) {
-        if (!empty($item)) {
-          $networks = explode("\n", $item);
-          $networks = array_map('trim', $networks);
-          foreach ($networks as $network) {
-            list($startip, $endip) = field_ipaddress_network2range($network);
-            dvm(field_ipaddress_network2range($network));
-            $items[$delta] = array(
-              'start' => ip2long($startip),
-              'end' => ip2long($endip),
-            );
-          }
+    foreach ($items as $delta => $item) {
+      if (!empty($item)) {
+        $networks = explode("\n", $item);
+        $networks = array_map('trim', $networks);
+        foreach ($networks as $network) {
+          list($startip, $endip) = field_ipaddress_network2range($network);
+          $newitems[] = array(
+            'start' => ip2long($startip),
+            'end' => ip2long($endip),
+          );
         }
       }
     }
   }
+  $items = $newitems;
 }
 
 /**
@@ -105,30 +89,24 @@ function field_ipaddress_field_presave($entity_type, $entity, $field, $instance,
  */
 function field_ipaddress_field_formatter_view($entity_type, $entity, $field, $instance, $langcode, $items, $display) {
   $element = array();
-
   switch ($display['type']) {
     case 'field_ipaddress_list':
-  
-      if ($field['cardinality'] == 1) { // TODO
-        foreach ($items as $delta => $item) {
-          $element[$delta] = array(
-            '#markup' => field_ipaddress_long2network($item['start'], $item['end']),
-          );
+      $networks = array();
+      foreach ($items as $delta => $item) {
+        if (!empty($item)) {
+          $networks[] = field_ipaddress_long2network($item['start'], $item['end']);
         }
       }
-      else {
-        foreach ($items as $delta => $item) {
-          if (!empty($item)) {
-            $networks = array();
-            $networks[] = field_ipaddress_long2network($item['start'], $item['end']);
-            $element[$delta] = array(
-              '#theme' => 'item_list',
-              '#items' => $networks,
-            );
-          }
-        }
-  
-      }      
+      if ($field['cardinality'] == 1) {
+        $element[$delta] = array(
+          '#markup' => $networks[0],
+        );
+      } else {
+        $element[$delta] = array(
+          '#theme' => 'item_list',
+          '#items' => $networks,
+        );
+      }
       break;
   }
 
@@ -156,35 +134,40 @@ function field_ipaddress_field_widget_info() {
 function field_ipaddress_field_widget_form(&$form, &$form_state, $field, $instance, $langcode, $items, $delta, $element) {
   switch ($instance['widget']['type']) {
     case 'field_ipaddress_range':
-      $start = isset($items[$delta]['start']) ? $items[$delta]['start'] : '';
-      $end = isset($items[$delta]['end']) ? $items[$delta]['end'] : '';
 
-      $value = '';
-      if ($start && $end) {
-        $value = field_ipaddress_long2network($start, $end);
-      }
-
-      $widget = $element;
-      $widget['#delta'] = $delta;
-
+      // Define the widget
       $widget = array(
         '#type' => 'textfield',
+        '#delta' => $delta,
         '#title' => $instance['label'],
         '#description' => $instance['description'],
-        '#default_value' => $value,
+        '#default_value' => '',
         '#size' => 30,
       );
 
+      // Add the values to the form
+      $addresses = array();
+      foreach ($items as $delta => $item) {
+        if (!empty($item['start']) && !empty($item['end'])
+            && $address = field_ipaddress_long2network($item['start'], $item['end'])) {
+          $addresses[] = $address;
+        }
+      }
+
+      // Resize for multi-value fields
       if ($field['cardinality'] != 1) {
         $widget['#type'] = 'textarea';
         $widget['#rows'] = ($field['cardinality'] == FIELD_CARDINALITY_UNLIMITED) ? 5 : $field['cardinality'];
       }
 
+      // Add the default values
+      if (!empty($addresses)) {
+        $widget['#default_value'] = implode("\n", $addresses);
+      }
       break;
   }
 
   $element['network'] = $widget;
-
   return $element;
 }
 
