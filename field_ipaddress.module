@@ -38,7 +38,7 @@ function field_ipaddress_field_formatter_info() {
  */
 function field_ipaddress_field_validate($entity_type, $entity, $field, $instance, $langcode, $items, &$errors) {
 
-  // This is a hack
+  // This is a hack: http://drupal.org/node/1308186
   if (isset($items['network'])) { $items = array(array('network' => $items['network'])); }
 
   foreach ($items as $delta => $item) {
