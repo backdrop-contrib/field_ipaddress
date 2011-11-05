@@ -1,6 +1,16 @@
 <?php
 
 /**
+ * Implements hook_migrate_api().
+ */
+function field_ipaddress_migrate_api() {
+  $api = array(
+    'api' => 2,
+  );
+  return $api;
+}
+
+/**
  * Implements hook_field_info().
  */
 function field_ipaddress_field_info() {
@@ -15,10 +25,28 @@ function field_ipaddress_field_info() {
 }
 
 /**
+ * Implements hook_presave().
+ *
+ * TODO this needs to be reviewed, it seems pretty ugly. We are taking the fieldset values and making it flat.
+ */
+function field_ipaddress_field_presave($entity_type, $entity, $field, $instance, $langcode, &$items) {
+  if ($field['type'] == 'field_ipaddress') {
+    foreach ($items as $delta => $item) {
+      if (!empty($item['ipaddress']['start']) && !empty($item['ipaddress']['end'])) {
+        $items[$delta]['start'] = $item['ipaddress']['start'];
+        $items[$delta]['end'] = $item['ipaddress']['end'];        
+      } else {
+        unset($items[$delta]);
+      }
+    }
+  }
+}
+
+/**
  * Implements hook_field_is_empty().
  */
 function field_ipaddress_field_is_empty($item, $field) {
-  return empty($item['network']);
+  return empty($item['ipaddress']);
 }
 
 /**
@@ -34,57 +62,6 @@ function field_ipaddress_field_formatter_info() {
 }
 
 /**
- * Implements hook_field_validate().
- */
-function field_ipaddress_field_validate($entity_type, $entity, $field, $instance, $langcode, $items, &$errors) {
-
-  // This is a hack: http://drupal.org/node/1308186
-  if (isset($items['network'])) { $items = array(array('network' => $items['network'])); }
-
-  foreach ($items as $delta => $item) {
-    if (!empty($item['network'])) {
-      // Are we doing multi-value or single value processing?
-      if ($field['cardinality'] == 1) {
-        $networks = array($item['network']);
-      } else {
-        $networks = explode("\n", $item['network']);
-        $networks = array_map('trim', $networks);
-      }
-      foreach ($networks as $network) {
-        if (!field_ipaddress_network2range($network)) {
-          $errors[$field['field_name']][$langcode][$delta][] = array(
-            'error' => 'field_ipaddress_invalid',
-            'message' => t('Invalid IP range or address: @address.', array('@address' => $network)),
-          );
-        }
-      }
-    }
-  }
-}
-
-/**
- * Implements hook_field_presave().
- */
-function field_ipaddress_field_presave($entity_type, $entity, $field, $instance, $langcode, &$items) {
-  if ($field['type'] === 'field_ipaddress') {
-    foreach ($items as $delta => $item) {
-      if (!empty($item)) {
-        $networks = explode("\n", $item);
-        $networks = array_map('trim', $networks);
-        foreach ($networks as $network) {
-          list($startip, $endip) = field_ipaddress_network2range($network);
-          $newitems[] = array(
-            'start' => ip2long($startip),
-            'end' => ip2long($endip),
-          );
-        }
-      }
-    }
-  }
-  $items = $newitems;
-}
-
-/**
  * Implements hook_field_formatter_view().
  */
 function field_ipaddress_field_formatter_view($entity_type, $entity, $field, $instance, $langcode, $items, $display) {
@@ -97,15 +74,18 @@ function field_ipaddress_field_formatter_view($entity_type, $entity, $field, $in
           $networks[] = field_ipaddress_long2network($item['start'], $item['end']);
         }
       }
-      if ($field['cardinality'] == 1) {
-        $element[$delta] = array(
-          '#markup' => $networks[0],
-        );
-      } else {
-        $element[$delta] = array(
-          '#theme' => 'item_list',
-          '#items' => $networks,
-        );
+      if (!empty($networks)) {
+        if (count($networks) === 1) {
+          $element[0] = array(
+            '#markup' => $networks[0],
+          );
+        }
+        else {
+          $element[0] = array(
+            '#theme' => 'item_list',
+            '#items' => $networks,
+          );
+        }
       }
       break;
   }
@@ -121,9 +101,10 @@ function field_ipaddress_field_widget_info() {
     'field_ipaddress_range' => array(
       'label' => t('Range input'),
       'field types' => array('field_ipaddress'),
-      'behaviors' => array(
-        'multiple values' => FIELD_BEHAVIOR_CUSTOM,
-      ),
+    ),
+    'field_ipaddress_raw' => array(
+      'label' => t('Raw input'),
+      'field types' => array('field_ipaddress'),
     ),
   );
 }
@@ -132,42 +113,43 @@ function field_ipaddress_field_widget_info() {
  * Implements hook_field_widget_form().
  */
 function field_ipaddress_field_widget_form(&$form, &$form_state, $field, $instance, $langcode, $items, $delta, $element) {
+  $widget = $element;
+  $widget['#delta'] = $delta;
+
   switch ($instance['widget']['type']) {
-    case 'field_ipaddress_range':
-
-      // Define the widget
-      $widget = array(
-        '#type' => 'textfield',
+    case 'field_ipaddress_raw':
+      $widget += array(
+        '#type' => 'fieldset',
         '#delta' => $delta,
-        '#title' => $instance['label'],
-        '#description' => $instance['description'],
-        '#default_value' => '',
-        '#size' => 30,
       );
+      $widget['start'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Start'),
+        '#size' => 15,
+        '#default_value' => isset($items[$delta]['start']) ? $items[$delta]['start'] : '',
+      );
+      $widget['end'] = array(
+        '#type' => 'textfield',
+        '#title' => t('End'),
+        '#size' => 15,
+        '#default_value' => isset($items[$delta]['end']) ? $items[$delta]['end'] : '',
+      );
+      break;
 
-      // Add the values to the form
-      $addresses = array();
-      foreach ($items as $delta => $item) {
-        if (!empty($item['start']) && !empty($item['end'])
-            && $address = field_ipaddress_long2network($item['start'], $item['end'])) {
-          $addresses[] = $address;
-        }
-      }
-
-      // Resize for multi-value fields
-      if ($field['cardinality'] != 1) {
-        $widget['#type'] = 'textarea';
-        $widget['#rows'] = ($field['cardinality'] == FIELD_CARDINALITY_UNLIMITED) ? 5 : $field['cardinality'];
-      }
-
-      // Add the default values
-      if (!empty($addresses)) {
-        $widget['#default_value'] = implode("\n", $addresses);
-      }
+    case 'field_ipaddress_range':
+      $value = (isset($items[$delta]['start']) && isset($items[$delta]['end'])) ?
+        field_ipaddress_long2network($items[$delta]['start'], $items[$delta]['end']) :
+        '';
+      $widget += array(
+        '#type' => 'textfield',
+        '#default_value' => $value,
+        '#size' => 30,
+        '#maxlength' => 100,
+        '#element_validate' => array('field_ipaddress_range_validate'),
+      );
       break;
   }
-
-  $element['network'] = $widget;
+  $element['ipaddress'] = $widget;
   return $element;
 }
 
@@ -179,6 +161,30 @@ function field_ipaddress_field_widget_error($element, $error, $form, &$form_stat
     case 'field_ipaddress_invalid':
       form_error($element, $error['message']);
       break;
+  }
+}
+
+/**
+ * Validate a range input.
+ */
+function field_ipaddress_range_validate($element, &$form_state) {
+  $delta = $element['#delta'];
+  $lang_code = $element['#language'];
+  $field = $form_state['field'][$element['#field_name']][$lang_code]['field'];
+  $field_name = $field['field_name'];
+  $ipaddress = trim($form_state['values'][$field_name][$lang_code][$delta]['ipaddress']);
+  if (!empty($ipaddress)) {
+    $range = field_ipaddress_network2range($ipaddress);
+    if ($range) {
+      list($startip, $endip) = $range;
+      $value = array(
+        'start' => ip2long($startip),
+        'end' => ip2long($endip),
+      );
+      form_set_value($element, $value, $form_state);
+   } else {
+      form_error($element, t('Invalid IP range or address.'));
+    }
   }
 }
 
