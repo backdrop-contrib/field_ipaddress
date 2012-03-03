@@ -1,4 +1,8 @@
 <?php
+/**
+ * @file
+ * Install, update and uninstall functions for the field_ipaddress module.
+ */
 
 /**
  * Implements hook_field_schema().
