@@ -18,8 +18,8 @@ function field_ipaddress_field_info() {
     'field_ipaddress' => array(
       'label' => t('IP Address'),
       'description' => t('Stores a single IP address, or range of IP addresses.'),
-      'default_widget' => 'field_ipaddress_range',
-      'default_formatter' => 'field_ipaddress_list',
+      'default_widget' => 'field_ipaddress_cidr',
+      'default_formatter' => 'field_ipaddress_cidr',
     ),
   );
 }
@@ -46,7 +46,7 @@ function field_ipaddress_field_presave($entity_type, $entity, $field, $instance,
  * Implements hook_field_is_empty().
  */
 function field_ipaddress_field_is_empty($item, $field) {
-  return empty($item['ipaddress']);
+  return empty($item['ipaddress']['start']) || empty($item['ipaddress']['end']);
 }
 
 /**
@@ -54,8 +54,12 @@ function field_ipaddress_field_is_empty($item, $field) {
  */
 function field_ipaddress_field_formatter_info() {
   return array(
-    'field_ipaddress_list' => array(
-      'label' => t('List'),
+    'field_ipaddress_shorthand' => array(
+      'label' => t('List of IPs (shorthand)'),
+      'field types' => array('field_ipaddress'),
+    ),
+    'field_ipaddress_cidr' => array(
+      'label' => t('List of IPs (CIDR)'),
       'field types' => array('field_ipaddress'),
     ),
   );
@@ -67,11 +71,33 @@ function field_ipaddress_field_formatter_info() {
 function field_ipaddress_field_formatter_view($entity_type, $entity, $field, $instance, $langcode, $items, $display) {
   $element = array();
   switch ($display['type']) {
-    case 'field_ipaddress_list':
+    case 'field_ipaddress_shorthand':
       $networks = array();
       foreach ($items as $delta => $item) {
         if (!empty($item)) {
-          $networks[] = field_ipaddress_long2network($item['start'], $item['end']);
+          $networks[] = _field_ipaddress_long2shorthand($item['start'], $item['end']);
+        }
+      }
+      if (!empty($networks)) {
+        if (count($networks) === 1) {
+          $element[0] = array(
+            '#markup' => $networks[0],
+          );
+        }
+        else {
+          $element[0] = array(
+            '#theme' => 'item_list',
+            '#items' => $networks,
+          );
+        }
+      }
+      break;
+
+    case 'field_ipaddress_cidr':
+      $networks = array();
+      foreach ($items as $delta => $item) {
+        if (!empty($item)) {
+          $networks[] = _field_ipaddress_long2cidr($item['start'], $item['end']);
         }
       }
       if (!empty($networks)) {
@@ -98,12 +124,16 @@ function field_ipaddress_field_formatter_view($entity_type, $entity, $field, $in
  */
 function field_ipaddress_field_widget_info() {
   return array(
-    'field_ipaddress_range' => array(
-      'label' => t('Range input'),
+    'field_ipaddress_shorthand' => array(
+      'label' => t('Shorthand input'),
       'field types' => array('field_ipaddress'),
     ),
-    'field_ipaddress_raw' => array(
-      'label' => t('Raw input'),
+    'field_ipaddress_cidr' => array(
+      'label' => t('CIDR input'),
+      'field types' => array('field_ipaddress'),
+    ),
+    'field_ipaddress_long' => array(
+      'label' => t('Long input'),
       'field types' => array('field_ipaddress'),
     ),
   );
@@ -117,7 +147,7 @@ function field_ipaddress_field_widget_form(&$form, &$form_state, $field, $instan
   $widget['#delta'] = $delta;
 
   switch ($instance['widget']['type']) {
-    case 'field_ipaddress_raw':
+    case 'field_ipaddress_long':
       $widget += array(
         '#type' => 'fieldset',
         '#delta' => $delta,
@@ -136,16 +166,29 @@ function field_ipaddress_field_widget_form(&$form, &$form_state, $field, $instan
       );
       break;
 
-    case 'field_ipaddress_range':
+    case 'field_ipaddress_shorthand':
       $value = (isset($items[$delta]['start']) && isset($items[$delta]['end'])) ?
-        field_ipaddress_long2network($items[$delta]['start'], $items[$delta]['end']) :
+        _field_ipaddress_long2shorthand($items[$delta]['start'], $items[$delta]['end']) :
         '';
       $widget += array(
         '#type' => 'textfield',
         '#default_value' => $value,
         '#size' => 30,
         '#maxlength' => 100,
-        '#element_validate' => array('field_ipaddress_range_validate'),
+        '#element_validate' => array('_field_ipaddress_validate_shorthand'),
+      );
+      break;
+      
+    case 'field_ipaddress_cidr':
+      $value = (isset($items[$delta]['start']) && isset($items[$delta]['end'])) ?
+        _field_ipaddress_long2cidr($items[$delta]['start'], $items[$delta]['end']) :
+        '';
+      $widget += array(
+        '#type' => 'textfield',
+        '#default_value' => $value,
+        '#size' => 30,
+        '#maxlength' => 100,
+        '#element_validate' => array('_field_ipaddress_validate_cidr'),
       );
       break;
   }
@@ -165,22 +208,37 @@ function field_ipaddress_field_widget_error($element, $error, $form, &$form_stat
 }
 
 /**
- * Validate a range input.
+ * Validate a CIDR input.
  */
-function field_ipaddress_range_validate($element, &$form_state) {
+function _field_ipaddress_validate_cidr($element, &$form_state) {
+  $delta = $element['#delta'];
+  $lang_code = $element['#language'];
+  $field = $form_state['field'][$element['#field_name']][$lang_code]['field'];
+  $field_name = $field['field_name'];
+
+  $ipaddress = trim($form_state['values'][$field_name][$lang_code][$delta]['ipaddress']);
+  if (!empty($ipaddress)) {
+    $range = _field_ipaddress_cidr2long($ipaddress);
+    if ($range) {
+      form_set_value($element, $range, $form_state);
+   } else {
+      form_error($element, t('Invalid IP range or address.'));
+    }
+  }
+}
+
+/**
+ * Validate a shorthand input.
+ */
+function _field_ipaddress_validate_shorthand($element, &$form_state) {
   $delta = $element['#delta'];
   $lang_code = $element['#language'];
   $field = $form_state['field'][$element['#field_name']][$lang_code]['field'];
   $field_name = $field['field_name'];
   $ipaddress = trim($form_state['values'][$field_name][$lang_code][$delta]['ipaddress']);
   if (!empty($ipaddress)) {
-    $range = field_ipaddress_network2range($ipaddress);
-    if ($range) {
-      list($startip, $endip) = $range;
-      $value = array(
-        'start' => ip2long($startip),
-        'end' => ip2long($endip),
-      );
+    $value = _field_ipaddress_shorthand2long($ipaddress);
+    if ($value) {
       form_set_value($element, $value, $form_state);
    } else {
       form_error($element, t('Invalid IP range or address.'));
@@ -189,7 +247,8 @@ function field_ipaddress_range_validate($element, &$form_state) {
 }
 
 /**
- * Convert a start address and end address (as longs) into a smaller human readable string.
+ * Convert a start address and end address (as longs) into a smaller
+ * human readable string.
  *
  * @param int $start The start address as a long
  * @param int $end The end address as a long
@@ -197,7 +256,7 @@ function field_ipaddress_range_validate($element, &$form_state) {
  * @example
  *   $s=1869573999, $e=1869574110 => 111.111.111.111-222
  */
-function field_ipaddress_long2network($start, $end) {
+function _field_ipaddress_long2shorthand($start, $end) {
   if ($start === $end) {
     $output = long2ip($start);
   } else {
@@ -219,8 +278,64 @@ function field_ipaddress_long2network($start, $end) {
   return $output;
 }
 
+
 /**
- * Take human input and return the dotted quad start and end range.
+ * Convert a start address and end address (as longs) into a CIDR.
+ */
+function _field_ipaddress_long2cidr($start, $end) {
+  $mask = (int) $start | ~ (int) $end;
+  $cidr = 32 - log(abs($mask), 2);
+
+  $valid = (int) $cidr == $cidr;
+  if (!$valid) {  
+    return _field_ipaddress_long2shorthand($start, $end);
+  }
+  return long2ip($start) . '/' . $cidr;
+
+  // TODO: This algorithm may be better:
+  //
+  // xor-ing will give you the inverse mask, log base 2 of that +1 will
+  // return the number of bits that are off in the mask and subtracting
+  // from 32 gets you the CIDR notation.
+  $long = ip2long($mask);
+  $base = ip2long('255.255.255.255');
+  $cidr = 32-log(($long ^ $base)+1,2);
+}
+
+
+/**
+ * Validate a CIDR
+ */
+function _field_ipaddress_cidr2long($cidr) {
+  list($ip, $cidr) = explode('/', $cidr);
+
+  // TODO
+  $start = ip2long($ip);
+  $end = ip2long($ip);
+
+  return array(
+    'start' => $start,
+    'end'   => $end,
+  );
+}
+
+/**
+ *
+ */
+function _field_ipaddress_shorthand2long($shorthand) {
+  $res = _field_ipaddress_shorthand2dottedquad($shorthand);
+  if (!$res) {
+    return FALSE;
+  }
+  list($start, $end) = $res;
+  return array(
+    'start' => ip2long($start),
+    'end'   => ip2long($end),
+  );
+}
+
+/**
+ * Take shorthand input and return the dotted quad start and end range.
  *
  * @param input $string An IP range.
  * @return array Start and end addresses in dotted quad format, else FALSE.
@@ -228,7 +343,7 @@ function field_ipaddress_long2network($start, $end) {
  *   "111.111.111.*" => array("111.111.111.0", "111.111.111.255")
  *   "111.111.111.111-222" => array("111.111.111.111", "111.111.111.222")
  */
-function field_ipaddress_network2range($network) {
+function _field_ipaddress_shorthand2dottedquad($network) {
   $star = strpos($network, '*');
   $dash = strpos($network, '-');
 
