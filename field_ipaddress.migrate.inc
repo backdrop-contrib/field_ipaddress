@@ -1,6 +1,11 @@
 <?php
 
 /**
+ * @file
+ * Adding support for the Migrate module.
+ */
+
+/**
  * Provides a ipaddress FieldHandler for the Migrate module.
  */
 class MigrateFieldIpaddressFieldHandler extends MigrateFieldHandler {
