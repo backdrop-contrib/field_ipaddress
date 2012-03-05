@@ -25,28 +25,10 @@ function field_ipaddress_field_info() {
 }
 
 /**
- * Implements hook_presave().
- *
- * TODO this needs to be reviewed, it seems pretty ugly. We are taking the fieldset values and making it flat.
- */
-function field_ipaddress_field_presave($entity_type, $entity, $field, $instance, $langcode, &$items) {
-  if ($field['type'] == 'field_ipaddress') {
-    foreach ($items as $delta => $item) {
-      if (!empty($item['ipaddress']['start']) && !empty($item['ipaddress']['end'])) {
-        $items[$delta]['start'] = $item['ipaddress']['start'];
-        $items[$delta]['end'] = $item['ipaddress']['end'];        
-      } else {
-        unset($items[$delta]);
-      }
-    }
-  }
-}
-
-/**
  * Implements hook_field_is_empty().
  */
 function field_ipaddress_field_is_empty($item, $field) {
-  return empty($item['ipaddress']['start']) || empty($item['ipaddress']['end']);
+  return empty($item['start']);
 }
 
 /**
@@ -143,56 +125,56 @@ function field_ipaddress_field_widget_info() {
  * Implements hook_field_widget_form().
  */
 function field_ipaddress_field_widget_form(&$form, &$form_state, $field, $instance, $langcode, $items, $delta, $element) {
-  $widget = $element;
-  $widget['#delta'] = $delta;
-
   switch ($instance['widget']['type']) {
     case 'field_ipaddress_long':
-      $widget += array(
+      $element += array(
         '#type' => 'fieldset',
-        '#delta' => $delta,
+        '#element_validate' => array('_field_ipaddress_validate_long'),
       );
-      $widget['start'] = array(
+      $element['start'] = array(
         '#type' => 'textfield',
         '#title' => t('Start'),
         '#size' => 15,
-        '#default_value' => isset($items[$delta]['start']) ? $items[$delta]['start'] : '',
+        '#default_value' => isset($items[$delta]['start']) ? long2ip($items[$delta]['start']) : '',
       );
-      $widget['end'] = array(
+      $element['end'] = array(
         '#type' => 'textfield',
         '#title' => t('End'),
         '#size' => 15,
-        '#default_value' => isset($items[$delta]['end']) ? $items[$delta]['end'] : '',
+        '#default_value' => isset($items[$delta]['end']) ? long2ip($items[$delta]['end']) : '',
       );
       break;
 
     case 'field_ipaddress_shorthand':
+      $element += array(
+        '#element_validate' => array('_field_ipaddress_validate_shorthand'),
+      );
       $value = (isset($items[$delta]['start']) && isset($items[$delta]['end'])) ?
         _field_ipaddress_long2shorthand($items[$delta]['start'], $items[$delta]['end']) :
         '';
-      $widget += array(
+      $element['start'] = array(
         '#type' => 'textfield',
         '#default_value' => $value,
         '#size' => 30,
         '#maxlength' => 100,
-        '#element_validate' => array('_field_ipaddress_validate_shorthand'),
       );
       break;
       
     case 'field_ipaddress_cidr':
+      $element += array(
+        '#element_validate' => array('_field_ipaddress_validate_cidr'),
+      );
       $value = (isset($items[$delta]['start']) && isset($items[$delta]['end'])) ?
         _field_ipaddress_long2cidr($items[$delta]['start'], $items[$delta]['end']) :
         '';
-      $widget += array(
+      $element['start'] = array(
         '#type' => 'textfield',
         '#default_value' => $value,
         '#size' => 30,
         '#maxlength' => 100,
-        '#element_validate' => array('_field_ipaddress_validate_cidr'),
       );
       break;
   }
-  $element['ipaddress'] = $widget;
   return $element;
 }
 
@@ -208,21 +190,66 @@ function field_ipaddress_field_widget_error($element, $error, $form, &$form_stat
 }
 
 /**
- * Validate a CIDR input.
+ * Validate a long input.
+ */
+function _field_ipaddress_validate_long($element, &$form_state) {
+  $delta = $element['#delta'];
+  $lang_code = $element['#language'];
+  $field = $form_state['field'][$element['#field_name']][$lang_code]['field'];
+  $field_name = $field['field_name'];
+  $startip = trim($form_state['values'][$field_name][$lang_code][$delta]['start']);
+  $endip = trim($form_state['values'][$field_name][$lang_code][$delta]['end']);
+  if (!empty($startip)) {
+    $start = ip2long($startip);
+    if (empty($endip)) {
+      $end = $start;
+    }
+    else {
+      $end = ip2long($endip);
+    }
+    $startip = long2ip($start);
+    $endip = long2ip($end);
+    if ($startip === '0.0.0.0' || $endip === '0.0.0.0') {
+      form_error($element, t('Invalid start or end IP.'));
+    } 
+    else if ($start > $end) {
+      form_error($element, t('Wrong order of start and end IP.'));
+    } 
+    else {
+      form_set_value($element['start'], $start, $form_state);
+      form_set_value($element['end'], $end, $form_state);
+    }
+  }
+}
+
+/**
+ * Validate a CIDR input. 
+ *
+ * The IP address (without CIDR prefix) is assumed to be the start of one well-defined block.
  */
 function _field_ipaddress_validate_cidr($element, &$form_state) {
   $delta = $element['#delta'];
   $lang_code = $element['#language'];
   $field = $form_state['field'][$element['#field_name']][$lang_code]['field'];
   $field_name = $field['field_name'];
-
-  $ipaddress = trim($form_state['values'][$field_name][$lang_code][$delta]['ipaddress']);
+  $ipaddress = trim($form_state['values'][$field_name][$lang_code][$delta]['start']);
   if (!empty($ipaddress)) {
-    $range = _field_ipaddress_cidr2long($ipaddress);
-    if ($range) {
-      form_set_value($element, $range, $form_state);
-   } else {
-      form_error($element, t('Invalid IP range or address.'));
+    list($ip, $bits) = explode('/', $ipaddress);
+    $minimumprefix = _field_ipaddress_minimum_cidr_prefix(ip2long($ip), 32);
+    if (!is_numeric($bits) || ((int)$bits != $bits) || ($bits < 0) || ($bits > 32)) {
+      form_error($element, t('The prefix must be an integer between 0 and 32.'));
+    } 
+    else if ($bits < $minimumprefix) {
+      form_error($element, t('The prefix is too small for the given IP address. ' .
+        'The minimum prefix is @value.', array('@value' => $minimumprefix)));
+    }
+    else {
+      $range = _field_ipaddress_cidr2long($ipaddress);
+      if ($range) {
+        form_set_value($element, $range, $form_state);
+      } else {
+         form_error($element, t('Invalid IP range or address.'));
+      }
     }
   }
 }
@@ -235,7 +262,7 @@ function _field_ipaddress_validate_shorthand($element, &$form_state) {
   $lang_code = $element['#language'];
   $field = $form_state['field'][$element['#field_name']][$lang_code]['field'];
   $field_name = $field['field_name'];
-  $ipaddress = trim($form_state['values'][$field_name][$lang_code][$delta]['ipaddress']);
+  $ipaddress = trim($form_state['values'][$field_name][$lang_code][$delta]['start']);
   if (!empty($ipaddress)) {
     $value = _field_ipaddress_shorthand2long($ipaddress);
     if ($value) {
@@ -278,45 +305,56 @@ function _field_ipaddress_long2shorthand($start, $end) {
   return $output;
 }
 
-
 /**
  * Convert a start address and end address (as longs) into a CIDR.
+ *
+ * The start address is assumed to be the start of a well-defined block.
  */
 function _field_ipaddress_long2cidr($start, $end) {
   $mask = (int) $start | ~ (int) $end;
   $cidr = 32 - log(abs($mask), 2);
 
   $valid = (int) $cidr == $cidr;
-  if (!$valid) {  
-    return _field_ipaddress_long2shorthand($start, $end);
+  if (!$valid) {
+    return '0.0.0.0/0';
   }
   return long2ip($start) . '/' . $cidr;
+}
 
-  // TODO: This algorithm may be better:
-  //
-  // xor-ing will give you the inverse mask, log base 2 of that +1 will
-  // return the number of bits that are off in the mask and subtracting
-  // from 32 gets you the CIDR notation.
-  $long = ip2long($mask);
-  $base = ip2long('255.255.255.255');
-  $cidr = 32-log(($long ^ $base)+1,2);
+/**
+ * Calculates the minimum CIDR prefix for a given IP address.
+ * The IP address is assumed to be the start of the block.
+ */
+function _field_ipaddress_minimum_cidr_prefix($ibase, $tbit) {
+  while ($tbit > 0) {
+    $im = pow(2,32) - pow(2, (32-($tbit-1)));
+    $imand = $ibase & $im;
+    if ($imand != $ibase) {
+      break;
+    }
+    $tbit--;
+  }
+  return $tbit;
 }
 
 
 /**
- * Validate a CIDR
+ * Converts a CIDR into a start address and end address.
  */
 function _field_ipaddress_cidr2long($cidr) {
-  list($ip, $cidr) = explode('/', $cidr);
+  list($ip, $bits) = explode('/', $cidr);
 
-  // TODO
-  $start = ip2long($ip);
-  $end = ip2long($ip);
-
-  return array(
-    'start' => $start,
-    'end'   => $end,
-  );
+  $start = long2ip(ip2long($ip));
+  $end   = long2ip(ip2long($ip) + pow(2, 32-$bits) - 1);
+  if ($start === '0.0.0.0' || $end === '0.0.0.0') {
+    return FALSE;
+  }
+  else {
+    return array(
+      'start' => ip2long($start),
+      'end'   => ip2long($end),
+    );
+  }
 }
 
 /**
@@ -396,4 +434,23 @@ function _field_ipaddress_shorthand2dottedquad($network) {
   }
 
   return array($start, $end);
+}
+
+/**
+ * Convert IP address in decimal form to long. 
+ * 
+ * A wrapper around ip2long that ignores any leading zeros in each octet.
+ * Normally a leading zero will cause ip2long (and many other tools) to
+ * interpret the octet as an octal number. See for example
+ * http://support.microsoft.com/kb/115388
+ */
+function _field_ipaddress_ip2long($ip) {
+  $octets = explode(".", $ip);
+  $ip = "";
+  $dot = "";
+  while (list($key,$val) = each($octets)) {
+    $ip = sprintf("%s%s%d",$ip,$dot,$val);
+    $dot = ".";
+  }
+  return ip2long($ip);
 }
