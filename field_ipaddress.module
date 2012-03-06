@@ -159,7 +159,7 @@ function field_ipaddress_field_widget_form(&$form, &$form_state, $field, $instan
         '#maxlength' => 100,
       );
       break;
-      
+
     case 'field_ipaddress_cidr':
       $element += array(
         '#element_validate' => array('_field_ipaddress_validate_cidr'),
@@ -211,10 +211,10 @@ function _field_ipaddress_validate_long($element, &$form_state) {
     $endip = long2ip($end);
     if ($startip === '0.0.0.0' || $endip === '0.0.0.0') {
       form_error($element, t('Invalid start or end IP.'));
-    } 
+    }
     else if ($start > $end) {
       form_error($element, t('Wrong order of start and end IP.'));
-    } 
+    }
     else {
       form_set_value($element['start'], $start, $form_state);
       form_set_value($element['end'], $end, $form_state);
@@ -223,7 +223,7 @@ function _field_ipaddress_validate_long($element, &$form_state) {
 }
 
 /**
- * Validate a CIDR input. 
+ * Validate a CIDR input.
  *
  * The IP address (without CIDR prefix) is assumed to be the start of one well-defined block.
  */
@@ -238,7 +238,7 @@ function _field_ipaddress_validate_cidr($element, &$form_state) {
     $minimumprefix = _field_ipaddress_minimum_cidr_prefix(ip2long($ip), 32);
     if (!is_numeric($bits) || ((int)$bits != $bits) || ($bits < 0) || ($bits > 32)) {
       form_error($element, t('The prefix must be an integer between 0 and 32.'));
-    } 
+    }
     else if ($bits < $minimumprefix) {
       form_error($element, t('The prefix is too small for the given IP address. ' .
         'The minimum prefix is @value.', array('@value' => $minimumprefix)));
@@ -437,8 +437,8 @@ function _field_ipaddress_shorthand2dottedquad($network) {
 }
 
 /**
- * Convert IP address in decimal form to long. 
- * 
+ * Convert IP address in decimal form to long.
+ *
  * A wrapper around ip2long that ignores any leading zeros in each octet.
  * Normally a leading zero will cause ip2long (and many other tools) to
  * interpret the octet as an octal number. See for example
