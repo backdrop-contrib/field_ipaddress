@@ -316,7 +316,7 @@ function _field_ipaddress_long2cidr($start, $end) {
 
   $valid = (int) $cidr == $cidr;
   if (!$valid) {
-    return '0.0.0.0/0';
+    return _field_ipaddress_long2shorthand($start, $end);
   }
   return long2ip($start) . '/' . $cidr;
 }
