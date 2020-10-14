@@ -1,7 +1,9 @@
 name = IP Address Field
 description = Provides a field for storing IP Addresses.
 package = Fields
-core = 7.x
+backdrop = 1.x
+type = module
 dependencies[] = field
 
-files[] = field_ipaddress.migrate.inc
+tag[] = fields
+tag[] = IP

@@ -11,6 +11,15 @@ function field_ipaddress_migrate_api() {
 }
 
 /**
+ * Implements hook_autoload_info().
+ */
+function field_ipaddress_autoload_info() {
+  return array(
+    'MigrateFieldIpaddressFieldHandler' => 'includes/field_ipaddress.migrate.inc',
+  );
+}
+
+/**
  * Implements hook_field_info().
  */
 function field_ipaddress_field_info() {
@@ -154,7 +163,10 @@ function field_ipaddress_field_widget_form(&$form, &$form_state, $field, $instan
         '';
       $element['start'] = array(
         '#type' => 'textfield',
+        '#title' => $element['#title'],
+        '#description' => $element['#description'],
         '#default_value' => $value,
+        '#required' => $element['#required'],
         '#size' => 30,
         '#maxlength' => 100,
       );
@@ -169,7 +181,10 @@ function field_ipaddress_field_widget_form(&$form, &$form_state, $field, $instan
         '';
       $element['start'] = array(
         '#type' => 'textfield',
+        '#title' => $element['#title'],
+        '#description' => $element['#description'],
         '#default_value' => $value,
+        '#required' => $element['#required'],
         '#size' => 30,
         '#maxlength' => 100,
       );
