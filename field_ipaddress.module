@@ -248,7 +248,10 @@ function _field_ipaddress_validate_cidr($element, &$form_state) {
   $field = $form_state['field'][$element['#field_name']][$lang_code]['field'];
   $field_name = $field['field_name'];
   $ipaddress = trim($form_state['values'][$field_name][$lang_code][$delta]['start']);
-  if (!empty($ipaddress)) {
+  if (!empty($ipaddress) && strpos($ipaddress, '/') == FALSE) {
+    form_error($element, t('Must be CIDR format, e.g. 10.10.10.10/32'));
+  }
+  elseif (!empty($ipaddress)) {
     list($ip, $bits) = explode('/', $ipaddress);
     $minimumprefix = _field_ipaddress_minimum_cidr_prefix(ip2long($ip), 32);
     if (!is_numeric($bits) || ((int)$bits != $bits) || ($bits < 0) || ($bits > 32)) {
